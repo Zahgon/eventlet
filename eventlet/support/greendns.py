@@ -1,37 +1,4 @@
-'''greendns - non-blocking DNS support for Eventlet
-'''
 
-# Portions of this code taken from the gogreen project:
-#   http://github.com/slideinc/gogreen
-#
-# Copyright (c) 2005-2010 Slide, Inc.
-# All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are
-# met:
-#
-#     * Redistributions of source code must retain the above copyright
-#       notice, this list of conditions and the following disclaimer.
-#     * Redistributions in binary form must reproduce the above
-#       copyright notice, this list of conditions and the following
-#       disclaimer in the documentation and/or other materials provided
-#       with the distribution.
-#     * Neither the name of the author nor the names of other
-#       contributors may be used to endorse or promote products derived
-#       from this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import re
 import struct
 import sys
@@ -46,10 +13,6 @@ from eventlet.green import ssl
 
 
 def import_patched(module_name):
-    # Import cycle note: it's crucial to use _socket_nodns here because
-    # regular evenlet.green.socket imports *this* module and if we imported
-    # it back we'd end with an import cycle (socket -> greendns -> socket).
-    # We break this import cycle by providing a restricted socket module.
     modules = {
         'select': select,
         'time': time,
@@ -62,7 +25,6 @@ def import_patched(module_name):
 
 dns = import_patched('dns')
 
-# Handle rdtypes separately; we need fully it available as we patch the rest
 dns.rdtypes = import_patched('dns.rdtypes')
 dns.rdtypes.__all__.extend(['dnskeybase', 'dsbase', 'txtbase'])
 for pkg in dns.rdtypes.__all__:
@@ -84,12 +46,8 @@ socket = _socket_nodns
 DNS_QUERY_TIMEOUT = 10.0
 HOSTS_TTL = 10.0
 
-# NOTE(victor): do not use EAI_*_ERROR instances for raising errors in python3, which will cause a memory leak.
 EAI_EAGAIN_ERROR = socket.gaierror(socket.EAI_AGAIN, 'Lookup timed out')
 EAI_NONAME_ERROR = socket.gaierror(socket.EAI_NONAME, 'Name or service not known')
-# EAI_NODATA was removed from RFC3493, it's now replaced with EAI_NONAME
-# socket.EAI_NODATA is not defined on FreeBSD, probably on some other platforms too.
-# https://lists.freebsd.org/pipermail/freebsd-ports/2003-October/005757.html
 EAI_NODATA_ERROR = EAI_NONAME_ERROR
 if (os.environ.get('EVENTLET_DEPRECATED_EAI_NODATA', '').lower() in ('1', 'y', 'yes')
         and hasattr(socket, 'EAI_NODATA')):
@@ -130,18 +88,13 @@ def is_ip_addr(host):
     return is_ipv4_addr(host) or is_ipv6_addr(host)
 
 
-# NOTE(ralonsoh): in dnspython v2.0.0, "_compute_expiration" was replaced
-# by "_compute_times".
 if hasattr(dns.query, '_compute_expiration'):
-    def compute_expiration(query, timeout):
-        return query._compute_expiration(timeout)
+    pass
 else:
-    def compute_expiration(query, timeout):
-        return query._compute_times(timeout)[1]
+    pass
 
 
 class HostsAnswer(dns.resolver.Answer):
-    """Answer class for HostsResolver object"""
 
     def __init__(self, qname, rdtype, rdclass, rrset, raise_on_no_answer=True):
         """Create a new answer
@@ -166,14 +119,6 @@ class HostsAnswer(dns.resolver.Answer):
 
 
 class HostsResolver:
-    """Class to parse the hosts file
-
-    Attributes
-    ----------
-
-    :fname: The filename of the hosts file in use.
-    :interval: The time between checking for hosts file modification
-    """
 
     LINES_RE = re.compile(r"""
         \s*  # Leading space
@@ -236,7 +181,6 @@ class HostsResolver:
                 ipmap = self._v4
             elif is_ipv6_addr(ip):
                 if ip.startswith('fe80'):
-                    # Do not use link-local addresses, OSX stores these here
                     continue
                 ipmap = self._v6
             else:
@@ -299,29 +243,10 @@ class HostsResolver:
         return HostsAnswer(qname, rdtype, rdclass, rrset, raise_on_no_answer)
 
     def getaliases(self, hostname):
-        """Return a list of all the aliases of a given cname"""
-        # Due to the way store aliases this is a bit inefficient, this
-        # clearly was an afterthought.  But this is only used by
-        # gethostbyname_ex so it's probably fine.
-        aliases = []
-        if hostname in self._aliases:
-            cannon = self._aliases[hostname]
-        else:
-            cannon = hostname
-        aliases.append(cannon)
-        for alias, cname in self._aliases.items():
-            if cannon == cname:
-                aliases.append(alias)
-        aliases.remove(hostname)
-        return aliases
+        pass
 
 
 class ResolverProxy:
-    """Resolver class which can also use /etc/hosts
-
-    Initialise with a HostsResolver instance in order for it to also
-    use the hosts file.
-    """
 
     def __init__(self, hosts_resolver=None, filename='/etc/resolv.conf'):
         """Initialise the resolver proxy
@@ -335,21 +260,11 @@ class ResolverProxy:
         """
         self._hosts = hosts_resolver
         self._filename = filename
-        # NOTE(dtantsur): we cannot create a resolver here since this code is
-        # executed on eventlet import. In an environment without DNS, creating
-        # a Resolver will fail making eventlet unusable at all. See
-        # https://github.com/eventlet/eventlet/issues/736 for details.
         self._cached_resolver = None
 
-    @property
-    def _resolver(self):
-        if self._cached_resolver is None:
-            self.clear()
-        return self._cached_resolver
+    pass
 
-    @_resolver.setter
-    def _resolver(self, value):
-        self._cached_resolver = value
+    pass
 
     def clear(self):
         self._resolver = dns.resolver.Resolver(filename=self._filename)
@@ -403,15 +318,8 @@ class ResolverProxy:
                 if (result[0] is not None) or (result[1] is not None) or (not use_network):
                     return end()
 
-        # Main query
         step(self._resolver.query, qname, rdtype, rdclass, tcp, source, raise_on_no_answer=False)
 
-        # `resolv.conf` docs say unqualified names must resolve from search (or local) domain.
-        # However, common OS `getaddrinfo()` implementations append trailing dot (e.g. `db -> db.`)
-        # and ask nameservers, as if top-level domain was queried.
-        # This step follows established practice.
-        # https://github.com/nameko/nameko/issues/392
-        # https://github.com/eventlet/eventlet/issues/363
         if len(qname) == 1:
             step(self._resolver.query, qname.concatenate(dns.name.root),
                  rdtype, rdclass, tcp, source, raise_on_no_answer=False)
@@ -419,20 +327,7 @@ class ResolverProxy:
         return end()
 
     def getaliases(self, hostname):
-        """Return a list of all the aliases of a given hostname"""
-        if self._hosts:
-            aliases = self._hosts.getaliases(hostname)
-        else:
-            aliases = []
-        while True:
-            try:
-                ans = self._resolver.query(hostname, dns.rdatatype.CNAME)
-            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-                break
-            else:
-                aliases.extend(str(rr.target) for rr in ans.rrset)
-                hostname = ans[0].target
-        return aliases
+        pass
 
 
 resolver = ResolverProxy(hosts_resolver=HostsResolver())
@@ -488,18 +383,7 @@ def resolve_cname(host):
 
 
 def getaliases(host):
-    """Return a list of for aliases for the given hostname
-
-    This method does translate the dnspython exceptions into
-    socket.gaierror exceptions.  If no aliases are available an empty
-    list will be returned.
-    """
-    try:
-        return resolver.getaliases(host)
-    except dns.exception.Timeout:
-        _raise_new_error(EAI_EAGAIN_ERROR)
-    except dns.exception.DNSException:
-        _raise_new_error(EAI_NODATA_ERROR)
+    pass
 
 
 def _getaddrinfo_lookup(host, family, flags):
@@ -593,16 +477,7 @@ def gethostbyname(hostname):
 
 
 def gethostbyname_ex(hostname):
-    """Replacement for Python's socket.gethostbyname_ex"""
-    if is_ipv4_addr(hostname):
-        return (hostname, [], [hostname])
-    ans = resolve(hostname)
-    aliases = getaliases(hostname)
-    addrs = [rr.address for rr in ans.rrset]
-    qname = str(ans.qname)
-    if qname[-1] == '.':
-        qname = qname[:-1]
-    return (qname, aliases, addrs)
+    pass
 
 
 def getnameinfo(sockaddr, flags):
@@ -615,14 +490,11 @@ def getnameinfo(sockaddr, flags):
     except (ValueError, TypeError):
         if not isinstance(sockaddr, tuple):
             del sockaddr  # to pass a stdlib test that is
-            # hyper-careful about reference counts
             raise TypeError('getnameinfo() argument 1 must be a tuple')
         else:
-            # must be ipv6 sockaddr, pretending we don't know how to resolve it
             _raise_new_error(EAI_NONAME_ERROR)
 
     if (flags & socket.NI_NAMEREQD) and (flags & socket.NI_NUMERICHOST):
-        # Conflicting flags.  Punt.
         _raise_new_error(EAI_NONAME_ERROR)
 
     if is_ipv4_addr(host):
@@ -659,54 +531,18 @@ def getnameinfo(sockaddr, flags):
 
 
 def _net_read(sock, count, expiration):
-    """coro friendly replacement for dns.query._net_read
-    Read the specified number of bytes from sock.  Keep trying until we
-    either get the desired amount, or we hit EOF.
-    A Timeout exception will be raised if the operation is not completed
-    by the expiration time.
-    """
-    s = bytearray()
-    while count > 0:
-        try:
-            n = sock.recv(count)
-        except socket.timeout:
-            # Q: Do we also need to catch coro.CoroutineSocketWake and pass?
-            if expiration - time.time() <= 0.0:
-                raise dns.exception.Timeout
-            eventlet.sleep(0.01)
-            continue
-        if n == b'':
-            raise EOFError
-        count = count - len(n)
-        s += n
-    return s
+    pass
 
 
 def _net_write(sock, data, expiration):
-    """coro friendly replacement for dns.query._net_write
-    Write the specified data to the socket.
-    A Timeout exception will be raised if the operation is not completed
-    by the expiration time.
-    """
-    current = 0
-    l = len(data)
-    while current < l:
-        try:
-            current += sock.send(data[current:])
-        except socket.timeout:
-            # Q: Do we also need to catch coro.CoroutineSocketWake and pass?
-            if expiration - time.time() <= 0.0:
-                raise dns.exception.Timeout
+    pass
 
 
-# Test if raise_on_truncation is an argument we should handle.
-# It was newly added in dnspython 2.0
 try:
     dns.message.from_wire("", raise_on_truncation=True)
 except dns.message.ShortHeader:
     _handle_raise_on_truncation = True
 except TypeError:
-    # Argument error, there is no argument "raise_on_truncation"
     _handle_raise_on_truncation = False
 
 
@@ -714,246 +550,18 @@ def udp(q, where, timeout=DNS_QUERY_TIMEOUT, port=53,
         af=None, source=None, source_port=0, ignore_unexpected=False,
         one_rr_per_rrset=False, ignore_trailing=False,
         raise_on_truncation=False, sock=None, ignore_errors=False):
-    """coro friendly replacement for dns.query.udp
-    Return the response obtained after sending a query via UDP.
-
-    @param q: the query
-    @type q: dns.message.Message
-    @param where: where to send the message
-    @type where: string containing an IPv4 or IPv6 address
-    @param timeout: The number of seconds to wait before the query times out.
-    If None, the default, wait forever.
-    @type timeout: float
-    @param port: The port to which to send the message.  The default is 53.
-    @type port: int
-    @param af: the address family to use.  The default is None, which
-    causes the address family to use to be inferred from the form of of where.
-    If the inference attempt fails, AF_INET is used.
-    @type af: int
-    @rtype: dns.message.Message object
-    @param source: source address.  The default is the IPv4 wildcard address.
-    @type source: string
-    @param source_port: The port from which to send the message.
-    The default is 0.
-    @type source_port: int
-    @param ignore_unexpected: If True, ignore responses from unexpected
-    sources.  The default is False.
-    @type ignore_unexpected: bool
-    @param one_rr_per_rrset: If True, put each RR into its own
-    RRset.
-    @type one_rr_per_rrset: bool
-    @param ignore_trailing: If True, ignore trailing
-    junk at end of the received message.
-    @type ignore_trailing: bool
-    @param raise_on_truncation: If True, raise an exception if
-    the TC bit is set.
-    @type raise_on_truncation: bool
-    @param sock: the socket to use for the
-    query.  If None, the default, a socket is created.  Note that
-    if a socket is provided, it must be a nonblocking datagram socket,
-    and the source and source_port are ignored.
-    @type sock: socket.socket | None
-    @param ignore_errors: if various format errors or response mismatches occur,
-    continue listening.
-    @type ignore_errors: bool"""
-
-    wire = q.to_wire()
-    if af is None:
-        try:
-            af = dns.inet.af_for_address(where)
-        except:
-            af = dns.inet.AF_INET
-    if af == dns.inet.AF_INET:
-        destination = (where, port)
-        if source is not None:
-            source = (source, source_port)
-    elif af == dns.inet.AF_INET6:
-        # Purge any stray zeroes in source address.  When doing the tuple comparison
-        # below, we need to always ensure both our target and where we receive replies
-        # from are compared with all zeroes removed so that we don't erroneously fail.
-        #   e.g. ('00::1', 53, 0, 0) != ('::1', 53, 0, 0)
-        where_trunc = dns.ipv6.inet_ntoa(dns.ipv6.inet_aton(where))
-        destination = (where_trunc, port, 0, 0)
-        if source is not None:
-            source = (source, source_port, 0, 0)
-
-    if sock:
-        s = sock
-    else:
-        s = socket.socket(af, socket.SOCK_DGRAM)
-    s.settimeout(timeout)
-    try:
-        expiration = compute_expiration(dns.query, timeout)
-        if source is not None:
-            s.bind(source)
-        while True:
-            try:
-                s.sendto(wire, destination)
-                break
-            except socket.timeout:
-                # Q: Do we also need to catch coro.CoroutineSocketWake and pass?
-                if expiration - time.time() <= 0.0:
-                    raise dns.exception.Timeout
-                eventlet.sleep(0.01)
-                continue
-
-        tried = False
-        while True:
-            # If we've tried to receive at least once, check to see if our
-            # timer expired
-            if tried and (expiration - time.time() <= 0.0):
-                raise dns.exception.Timeout
-            # Sleep if we are retrying the operation due to a bad source
-            # address or a socket timeout.
-            if tried:
-                eventlet.sleep(0.01)
-            tried = True
-
-            try:
-                (wire, from_address) = s.recvfrom(65535)
-            except socket.timeout:
-                # Q: Do we also need to catch coro.CoroutineSocketWake and pass?
-                continue
-            if dns.inet.af_for_address(from_address[0]) == dns.inet.AF_INET6:
-                # Purge all possible zeroes for ipv6 to match above logic
-                addr = from_address[0]
-                addr = dns.ipv6.inet_ntoa(dns.ipv6.inet_aton(addr))
-                from_address = (addr, from_address[1], from_address[2], from_address[3])
-            if from_address != destination:
-                if ignore_unexpected:
-                    continue
-                else:
-                    raise dns.query.UnexpectedSource(
-                        'got a response from %s instead of %s'
-                        % (from_address, destination))
-            try:
-                if _handle_raise_on_truncation:
-                    r = dns.message.from_wire(wire,
-                                              keyring=q.keyring,
-                                              request_mac=q.mac,
-                                              one_rr_per_rrset=one_rr_per_rrset,
-                                              ignore_trailing=ignore_trailing,
-                                              raise_on_truncation=raise_on_truncation)
-                else:
-                    r = dns.message.from_wire(wire,
-                                              keyring=q.keyring,
-                                              request_mac=q.mac,
-                                              one_rr_per_rrset=one_rr_per_rrset,
-                                              ignore_trailing=ignore_trailing)
-                if not q.is_response(r):
-                    raise dns.query.BadResponse()
-                break
-            except dns.message.Truncated as e:
-                if ignore_errors and not q.is_response(e.message()):
-                    continue
-                else:
-                    raise
-            except Exception:
-                if ignore_errors:
-                    continue
-                else:
-                    raise
-    finally:
-        s.close()
-
-    return r
+    pass
 
 
 def tcp(q, where, timeout=DNS_QUERY_TIMEOUT, port=53,
         af=None, source=None, source_port=0,
         one_rr_per_rrset=False, ignore_trailing=False, sock=None):
-    """coro friendly replacement for dns.query.tcp
-    Return the response obtained after sending a query via TCP.
-
-    @param q: the query
-    @type q: dns.message.Message object
-    @param where: where to send the message
-    @type where: string containing an IPv4 or IPv6 address
-    @param timeout: The number of seconds to wait before the query times out.
-    If None, the default, wait forever.
-    @type timeout: float
-    @param port: The port to which to send the message.  The default is 53.
-    @type port: int
-    @param af: the address family to use.  The default is None, which
-    causes the address family to use to be inferred from the form of of where.
-    If the inference attempt fails, AF_INET is used.
-    @type af: int
-    @rtype: dns.message.Message object
-    @param source: source address.  The default is the IPv4 wildcard address.
-    @type source: string
-    @param source_port: The port from which to send the message.
-    The default is 0.
-    @type source_port: int
-    @type ignore_unexpected: bool
-    @param one_rr_per_rrset: If True, put each RR into its own
-    RRset.
-    @type one_rr_per_rrset: bool
-    @param ignore_trailing: If True, ignore trailing
-    junk at end of the received message.
-    @type ignore_trailing: bool
-    @param sock: the socket to use for the
-    query.  If None, the default, a socket is created.  Note that
-    if a socket is provided, it must be a nonblocking datagram socket,
-    and the source and source_port are ignored.
-    @type sock: socket.socket | None"""
-
-    wire = q.to_wire()
-    if af is None:
-        try:
-            af = dns.inet.af_for_address(where)
-        except:
-            af = dns.inet.AF_INET
-    if af == dns.inet.AF_INET:
-        destination = (where, port)
-        if source is not None:
-            source = (source, source_port)
-    elif af == dns.inet.AF_INET6:
-        destination = (where, port, 0, 0)
-        if source is not None:
-            source = (source, source_port, 0, 0)
-    if sock:
-        s = sock
-    else:
-        s = socket.socket(af, socket.SOCK_STREAM)
-    s.settimeout(timeout)
-    try:
-        expiration = compute_expiration(dns.query, timeout)
-        if source is not None:
-            s.bind(source)
-        while True:
-            try:
-                s.connect(destination)
-                break
-            except socket.timeout:
-                # Q: Do we also need to catch coro.CoroutineSocketWake and pass?
-                if expiration - time.time() <= 0.0:
-                    raise dns.exception.Timeout
-                eventlet.sleep(0.01)
-                continue
-
-        l = len(wire)
-        # copying the wire into tcpmsg is inefficient, but lets us
-        # avoid writev() or doing a short write that would get pushed
-        # onto the net
-        tcpmsg = struct.pack("!H", l) + wire
-        _net_write(s, tcpmsg, expiration)
-        ldata = _net_read(s, 2, expiration)
-        (l,) = struct.unpack("!H", ldata)
-        wire = bytes(_net_read(s, l, expiration))
-    finally:
-        s.close()
-    r = dns.message.from_wire(wire, keyring=q.keyring, request_mac=q.mac,
-                              one_rr_per_rrset=one_rr_per_rrset,
-                              ignore_trailing=ignore_trailing)
-    if not q.is_response(r):
-        raise dns.query.BadResponse()
-    return r
+    pass
 
 
 def reset():
     resolver.clear()
 
 
-# Install our coro-friendly replacements for the tcp and udp query methods.
 dns.query.tcp = tcp
 dns.query.udp = udp

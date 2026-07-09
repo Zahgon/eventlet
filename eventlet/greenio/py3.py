@@ -23,11 +23,8 @@ from eventlet.support import get_errno
 
 __all__ = ['_fileobject', 'GreenPipe']
 
-# TODO get rid of this, it only seems like the original _fileobject
 _fileobject = _original_socket.SocketIO
 
-# Large part of the following code is copied from the original
-# eventlet.greenio module
 
 
 class GreenFileIO(_OriginalIOBase):
@@ -51,23 +48,7 @@ class GreenFileIO(_OriginalIOBase):
         set_nonblocking(self)
         self._seekable = None
 
-    @property
-    def closed(self):
-        return self._closed
 
-    def seekable(self):
-        if self._seekable is None:
-            try:
-                _original_os.lseek(self._fileno, 0, _original_os.SEEK_CUR)
-            except OSError as e:
-                if get_errno(e) == errno.ESPIPE:
-                    self._seekable = False
-                else:
-                    raise
-            else:
-                self._seekable = True
-
-        return self._seekable
 
     def readable(self):
         return 'r' in self._mode or '+' in self._mode
@@ -110,28 +91,16 @@ class GreenFileIO(_OriginalIOBase):
         b[:bytes_read] = data
         return bytes_read
 
-    def isatty(self):
-        try:
-            return _original_os.isatty(self.fileno())
-        except OSError as e:
-            raise OSError(*e.args)
 
-    def _isatty_open_only(self):
-        # Python does an optimization here, not going to bother and just do the
-        # slow path.
-        return self.isatty()
 
     def _trampoline(self, fd, read=False, write=False, timeout=None, timeout_exc=None):
         if self._closed:
-            # Don't trampoline if we're already closed.
             raise IOClosed()
         try:
             return trampoline(fd, read=read, write=write, timeout=timeout,
                               timeout_exc=timeout_exc,
                               mark_as_closed=self._mark_as_closed)
         except IOClosed:
-            # Our fileno has been obsoleted. Defang ourselves to
-            # prevent spurious closes.
             self._mark_as_closed()
             raise
 
@@ -165,24 +134,7 @@ class GreenFileIO(_OriginalIOBase):
                 'write', 'xreadlines', '__iter__', '__next__', 'writelines']:
             setattr(self, method, _operation_on_closed_file)
 
-    def truncate(self, size=-1):
-        if size is None:
-            size = -1
-        if size == -1:
-            size = self.tell()
-        try:
-            rv = _original_os.ftruncate(self._fileno, size)
-        except OSError as e:
-            raise OSError(*e.args)
-        else:
-            self.seek(size)  # move position&clear buffer
-            return rv
 
-    def seek(self, offset, whence=_original_os.SEEK_SET):
-        try:
-            return _original_os.lseek(self._fileno, offset, whence)
-        except OSError as e:
-            raise OSError(*e.args)
 
     def __enter__(self):
         return self

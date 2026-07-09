@@ -1,24 +1,3 @@
-# Copyright (c) 2009-2010 Denis Bilenko, denis.bilenko at gmail com
-# Copyright (c) 2010 Eventlet Contributors (see AUTHORS)
-# and licensed under the MIT license:
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
 
 import functools
 import inspect
@@ -31,22 +10,9 @@ __all__ = ['Timeout', 'with_timeout', 'wrap_is_timeout', 'is_timeout']
 
 _MISSING = object()
 
-# deriving from BaseException so that "except Exception as e" doesn't catch
-# Timeout exceptions.
 
 
 class Timeout(BaseException):
-    """Raises *exception* in the current greenthread after *timeout* seconds.
-
-    When *exception* is omitted or ``None``, the :class:`Timeout` instance
-    itself is raised. If *seconds* is None, the timer is not scheduled, and is
-    only useful if you're planning to raise it directly.
-
-    Timeout objects are context managers, and so can be used in with statements.
-    When used in a with statement, if *exception* is ``False``, the timeout is
-    still raised, but the context manager suppresses it, so the code outside the
-    with-block won't see it.
-    """
 
     def __init__(self, seconds=None, exception=None):
         self.seconds = seconds
@@ -72,11 +38,7 @@ class Timeout(BaseException):
 
     @property
     def pending(self):
-        """True if the timeout is scheduled to be raised."""
-        if self.timer is not None:
-            return self.timer.pending
-        else:
-            return False
+        pass
 
     def cancel(self):
         """If the timeout is pending, cancel it.  If not using
@@ -131,9 +93,6 @@ class Timeout(BaseException):
         if value is self and self.exception is False:
             return True
 
-    @property
-    def is_timeout(self):
-        return True
 
 
 def with_timeout(seconds, function, *args, **kwds):
@@ -180,5 +139,3 @@ else:
     _timeout_err = getattr(__builtins__, 'TimeoutError', Timeout)
 
 
-def is_timeout(obj):
-    return bool(getattr(obj, 'is_timeout', False)) or isinstance(obj, _timeout_err)

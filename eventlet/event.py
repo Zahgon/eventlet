@@ -13,30 +13,6 @@ NOT_USED = NOT_USED()
 
 
 class Event:
-    """An abstraction where an arbitrary number of coroutines
-    can wait for one event from another.
-
-    Events are similar to a Queue that can only hold one item, but differ
-    in two important ways:
-
-    1. calling :meth:`send` never unschedules the current greenthread
-    2. :meth:`send` can only be called once; create a new event to send again.
-
-    They are good for communicating results between coroutines, and
-    are the basis for how
-    :meth:`GreenThread.wait() <eventlet.greenthread.GreenThread.wait>`
-    is implemented.
-
-    >>> from eventlet import event
-    >>> import eventlet
-    >>> evt = event.Event()
-    >>> def baz(b):
-    ...     evt.send(b + 1)
-    ...
-    >>> _ = eventlet.spawn_n(baz, 3)
-    >>> evt.wait()
-    4
-    """
     _result = None
     _exc = None
 
@@ -50,9 +26,6 @@ class Event:
         return '<%s at %s result=%r _exc=%r _waiters[%d]>' % params
 
     def reset(self):
-        # this is kind of a misfeature and doesn't work perfectly well,
-        # it's better to create a new event rather than reset an old one
-        # removing documentation so that we don't get new use cases for it
         assert self._result is not NOT_USED, 'Trying to re-reset() a fresh event.'
         self._result = NOT_USED
         self._exc = None
@@ -65,31 +38,14 @@ class Event:
         and then you can :meth:`wait` on that one."""
         return self._result is not NOT_USED
 
-    def has_exception(self):
-        return self._exc is not None
 
-    def has_result(self):
-        return self._result is not NOT_USED and self._exc is None
 
     def poll(self, notready=None):
         if self.ready():
             return self.wait()
         return notready
 
-    # QQQ make it return tuple (type, value, tb) instead of raising
-    # because
-    # 1) "poll" does not imply raising
-    # 2) it's better not to screw up caller's sys.exc_info() by default
-    #    (e.g. if caller wants to calls the function in except or finally)
-    def poll_exception(self, notready=None):
-        if self.has_exception():
-            return self.wait()
-        return notready
 
-    def poll_result(self, notready=None):
-        if self.has_result():
-            return self.wait()
-        return notready
 
     def wait(self, timeout=None):
         """Wait until another coroutine calls :meth:`send`.
@@ -167,12 +123,6 @@ class Event:
             hub.schedule_call_global(
                 0, self._do_send, self._result, self._exc, waiter)
 
-    def _do_send(self, result, exc, waiter):
-        if waiter in self._waiters:
-            if exc is None:
-                waiter.switch(result)
-            else:
-                waiter.throw(*exc)
 
     def send_exception(self, *args):
         """Same as :meth:`send`, but sends an exception to waiters.
@@ -214,5 +164,4 @@ class Event:
         Event object, which may cause reference cycles. See the
         :func:`sys.exc_info` documentation.
         """
-        # the arguments and the same as for greenlet.throw
         return self.send(None, args)

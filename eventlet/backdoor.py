@@ -21,8 +21,6 @@ class FileProxy:
     def __init__(self, f):
         self.f = f
 
-    def isatty(self):
-        return True
 
     def flush(self):
         pass
@@ -42,13 +40,10 @@ class FileProxy:
         return getattr(self.f, attr)
 
 
-# @@tavis: the `locals` args below mask the built-in function.  Should
-# be renamed.
 class SocketConsole(greenlets.greenlet):
     def __init__(self, desc, hostport, locals):
         self.hostport = hostport
         self.locals = locals
-        # mangle the socket
         self.desc = FileProxy(desc)
         greenlets.greenlet.__init__(self)
 
@@ -69,7 +64,6 @@ class SocketConsole(greenlets.greenlet):
         sys.stdin, sys.stderr, sys.stdout = self.saved
 
     def finalize(self):
-        # restore the state of the socket
         self.desc = None
         if len(self.hostport) >= 2:
             host = self.hostport[0]
@@ -90,12 +84,10 @@ def backdoor_server(sock, locals=None):
     """
     listening_on = sock.getsockname()
     if sock.family == socket.AF_INET:
-        # Expand result to IP + port
         listening_on = '%s:%s' % listening_on
     elif sock.family == socket.AF_INET6:
         ip, port, _, _ = listening_on
         listening_on = '%s:%s' % (ip, port,)
-    # No action needed if sock.family == socket.AF_UNIX
 
     print("backdoor server listening on %s" % (listening_on,))
     try:
@@ -105,7 +97,6 @@ def backdoor_server(sock, locals=None):
                 socketpair = sock.accept()
                 backdoor(socketpair, locals)
             except OSError as e:
-                # Broken pipe means it was shutdown
                 if get_errno(e) != errno.EPIPE:
                     raise
             finally:

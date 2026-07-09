@@ -10,8 +10,6 @@ DEBUG = True
 
 
 class GreenPool:
-    """The GreenPool class is a pool of green threads.
-    """
 
     def __init__(self, size=1000):
         try:
@@ -28,17 +26,7 @@ class GreenPool:
         self.no_coros_running = eventlet.Event()
 
     def resize(self, new_size):
-        """ Change the max number of greenthreads doing work at any given time.
-
-        If resize is called when there are more than *new_size* greenthreads
-        already working on tasks, they will be allowed to complete but no new
-        tasks will be allowed to get launched until enough greenthreads finish
-        their tasks to drop the overall quantity below *new_size*.  Until
-        then, the return value of free() will be negative.
-        """
-        size_delta = new_size - self.size
-        self.sem.counter += size_delta
-        self.size = new_size
+        pass
 
     def running(self):
         """ Returns the number of greenthreads that are currently executing
@@ -46,11 +34,7 @@ class GreenPool:
         return len(self.coroutines_running)
 
     def free(self):
-        """ Returns the number of greenthreads available for use.
-
-        If zero or less, the next call to :meth:`spawn` or :meth:`spawn_n` will
-        block the calling greenthread until a slot becomes available."""
-        return self.sem.counter
+        pass
 
     def spawn(self, function, *args, **kwargs):
         """Run the *function* with its arguments in its own green thread.
@@ -64,11 +48,8 @@ class GreenPool:
         This function is reentrant; *function* can call ``spawn`` on the same
         pool without risk of deadlocking the whole thing.
         """
-        # if reentering an empty pool, don't try to wait on a coroutine freeing
-        # itself -- instead, just execute in the current coroutine
         current = eventlet.getcurrent()
         if self.sem.locked() and current in self.coroutines_running:
-            # a bit hacky to use the GT without switching to it
             gt = eventlet.greenthread.GreenThread(current)
             gt.main(function, args, kwargs)
             return gt
@@ -100,8 +81,6 @@ class GreenPool:
         :meth:`spawn`.  The difference is that :meth:`spawn_n` returns
         None; the results of *function* are not retrievable.
         """
-        # if reentering an empty pool, don't try to wait on a coroutine freeing
-        # itself -- instead, just execute in the current coroutine
         current = eventlet.getcurrent()
         if self.sem.locked() and current in self.coroutines_running:
             self._spawn_n_impl(function, args, kwargs, None)
@@ -126,8 +105,6 @@ class GreenPool:
         self.sem.release()
         if coro is not None:
             self.coroutines_running.remove(coro)
-        # if done processing (no more work is waiting for processing),
-        # we can finish off any waitall() calls that might be pending
         if self.sem.balance == self.size:
             self.no_coros_running.send(None)
 
@@ -139,63 +116,15 @@ class GreenPool:
         else:
             return 0
 
-    def _do_map(self, func, it, gi):
-        for args in it:
-            gi.spawn(func, *args)
-        gi.done_spawning()
 
     def starmap(self, function, iterable):
-        """This is the same as :func:`itertools.starmap`, except that *func* is
-        executed in a separate green thread for each item, with the concurrency
-        limited by the pool's size. In operation, starmap consumes a constant
-        amount of memory, proportional to the size of the pool, and is thus
-        suited for iterating over extremely long input lists.
-        """
-        if function is None:
-            function = lambda *a: a
-        # We use a whole separate greenthread so its spawn() calls can block
-        # without blocking OUR caller. On the other hand, we must assume that
-        # our caller will immediately start trying to iterate over whatever we
-        # return. If that were a GreenPile, our caller would always see an
-        # empty sequence because the hub hasn't even entered _do_map() yet --
-        # _do_map() hasn't had a chance to spawn a single greenthread on this
-        # GreenPool! A GreenMap is safe to use with different producer and
-        # consumer greenthreads, because it doesn't raise StopIteration until
-        # the producer has explicitly called done_spawning().
-        gi = GreenMap(self.size)
-        eventlet.spawn_n(self._do_map, function, iterable, gi)
-        return gi
+        pass
 
     def imap(self, function, *iterables):
-        """This is the same as :func:`itertools.imap`, and has the same
-        concurrency and memory behavior as :meth:`starmap`.
-
-        It's quite convenient for, e.g., farming out jobs from a file::
-
-           def worker(line):
-               return do_something(line)
-           pool = GreenPool()
-           for result in pool.imap(worker, open("filename", 'r')):
-               print(result)
-        """
-        return self.starmap(function, zip(*iterables))
+        pass
 
 
 class GreenPile:
-    """GreenPile is an abstraction representing a bunch of I/O-related tasks.
-
-    Construct a GreenPile with an existing GreenPool object.  The GreenPile will
-    then use that pool's concurrency as it processes its jobs.  There can be
-    many GreenPiles associated with a single GreenPool.
-
-    A GreenPile can also be constructed standalone, not associated with any
-    GreenPool.  To do this, construct it with an integer size parameter instead
-    of a GreenPool.
-
-    It is not advisable to iterate over a GreenPile in a different greenthread
-    than the one which is calling spawn.  The iterator will exit early in that
-    situation.
-    """
 
     def __init__(self, size_or_pool=1000):
         if isinstance(size_or_pool, GreenPool):
@@ -220,35 +149,15 @@ class GreenPile:
         return self
 
     def next(self):
-        """Wait for the next result, suspending the current greenthread until it
-        is available.  Raises StopIteration when there are no more results."""
-        if self.counter == 0:
-            raise StopIteration()
-        return self._next()
+        pass
     __next__ = next
 
-    def _next(self):
-        try:
-            return self.waiters.get().wait()
-        finally:
-            self.counter -= 1
 
 
-# this is identical to GreenPile but it blocks on spawn if the results
-# aren't consumed, and it doesn't generate its own StopIteration exception,
-# instead relying on the spawning process to send one in when it's done
 class GreenMap(GreenPile):
     def __init__(self, size_or_pool):
         super().__init__(size_or_pool)
         self.waiters = queue.LightQueue(maxsize=self.pool.size)
 
-    def done_spawning(self):
-        self.spawn(lambda: StopIteration())
 
-    def next(self):
-        val = self._next()
-        if isinstance(val, StopIteration):
-            raise val
-        else:
-            return val
     __next__ = next

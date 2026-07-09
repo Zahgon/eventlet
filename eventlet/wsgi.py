@@ -21,7 +21,6 @@ MAX_REQUEST_LINE = 8192
 MAX_HEADER_LINE = 8192
 MAX_TOTAL_HEADER_SIZE = 65536
 MINIMUM_CHUNK_SIZE = 4096
-# %(client_port)s is also available
 DEFAULT_LOG_FORMAT = ('%(client_ip)s - - [%(date_time)s] "%(request_line)s"'
                       ' %(status_code)s %(body_length)s %(wall_seconds).6f')
 RESPONSE_414 = b'''HTTP/1.0 414 Request URI Too Long\r\n\
@@ -35,7 +34,6 @@ STATE_CLOSE = 'close'
 
 __all__ = ['server', 'format_date_time']
 
-# Weekday and month names for HTTP date/time formatting; always English!
 _weekdayname = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 _monthname = [None,  # Dummy so we can use 1-based month numbers
               "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -59,8 +57,6 @@ def addr_to_host_port(addr):
     return (host, port)
 
 
-# Collections of error codes to compare against.  Not all attributes are set
-# on errno module on all platforms, so some are literals :(
 BAD_SOCK = {errno.EBADF, 10053}
 BROKEN_SOCK = {errno.EPIPE, errno.ECONNRESET, errno.ESHUTDOWN}
 
@@ -95,51 +91,33 @@ class Input:
         self.chunked_input = chunked_input
         self.chunk_length = -1
 
-        # (optional) headers to send with a "100 Continue" response. Set by
-        # calling set_hundred_continue_respose_headers() on env['wsgi.input']
         self.hundred_continue_headers = None
         self.is_hundred_continue_response_sent = False
 
-        # handle_one_response should give us a ref to the response state so we
-        # know whether we can still send the 100 Continue; until then, though,
-        # we're flying blind
         self.headers_sent = None
 
     def send_hundred_continue_response(self):
         if self.headers_sent:
-            # To late; application has already started sending data back
-            # to the client
-            # TODO: maybe log a warning if self.hundred_continue_headers
-            #       is not None?
             return
 
         towrite = []
 
-        # 100 Continue status line
         towrite.append(self.wfile_line)
 
-        # Optional headers
         if self.hundred_continue_headers is not None:
-            # 100 Continue headers
             for header in self.hundred_continue_headers:
                 towrite.append(('%s: %s\r\n' % header).encode())
 
-        # Blank line
         towrite.append(b'\r\n')
 
         self.wfile.writelines(towrite)
         self.wfile.flush()
 
-        # Reinitialize chunk_length (expect more data)
         self.chunk_length = -1
 
-    @property
-    def should_send_hundred_continue(self):
-        return self.wfile is not None and not self.is_hundred_continue_response_sent
 
     def _do_read(self, reader, length=None):
         if self.should_send_hundred_continue:
-            # 100 Continue response
             self.send_hundred_continue_response()
             self.is_hundred_continue_response_sent = True
         if length is None or length > self.content_length - self.position:
@@ -161,7 +139,6 @@ class Input:
 
     def _chunked_read(self, rfile, length=None, use_readline=False):
         if self.should_send_hundred_continue:
-            # 100 Continue response
             self.send_hundred_continue_response()
             self.is_hundred_continue_response_sent = True
         try:
@@ -240,20 +217,7 @@ class Input:
     def __iter__(self):
         return iter(self.read, b'')
 
-    def get_socket(self):
-        return self._sock
 
-    def set_hundred_continue_response_headers(self, headers,
-                                              capitalize_response_headers=True):
-        # Response headers capitalization (default)
-        # CONTent-TYpe: TExt/PlaiN -> Content-Type: TExt/PlaiN
-        # Per HTTP RFC standard, header name is case-insensitive.
-        # Please, fix your client to ignore header case if possible.
-        if capitalize_response_headers:
-            headers = [
-                ('-'.join([x.capitalize() for x in key.split('-')]), value)
-                for key, value in headers]
-        self.hundred_continue_headers = headers
 
     def discard(self, buffer_size=16 << 10):
         while self.read(buffer_size):
@@ -335,23 +299,11 @@ class FileObjectForHeaders:
 
 
 class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
-    """This class is used to handle the HTTP requests that arrive
-    at the server.
-
-    The handler will parse the request and the headers, then call a method
-    specific to the request type.
-
-    :param conn_state: The given connection status.
-    :param server: The server accessible by the request handler.
-    """
     protocol_version = 'HTTP/1.1'
     minimum_chunk_size = MINIMUM_CHUNK_SIZE
     capitalize_response_headers = True
     reject_bad_requests = True
 
-    # https://github.com/eventlet/eventlet/issues/295
-    # Stdlib default is 0 (unbuffered), but then `wfile.writelines()` looses data
-    # so before going back to unbuffered, remove any usage of `writelines`.
     wbufsize = 16 << 10
 
     def __init__(self, conn_state, server):
@@ -359,7 +311,6 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
         self.client_address = conn_state[0]
         self.conn_state = conn_state
         self.server = server
-        # Want to allow some overrides from the server before running setup
         if server.minimum_chunk_size is not None:
             self.minimum_chunk_size = server.minimum_chunk_size
         self.capitalize_response_headers = server.capitalize_response_headers
@@ -371,11 +322,8 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
             self.finish()
 
     def setup(self):
-        # overriding SocketServer.setup to correctly handle SSL.Connection objects
         conn = self.connection = self.request
 
-        # TCP_QUICKACK is a better alternative to disabling Nagle's algorithm
-        # https://news.ycombinator.com/item?id=10607422
         if getattr(socket, 'TCP_QUICKACK', None):
             try:
                 conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_QUICKACK, True)
@@ -387,11 +335,9 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
             self.wfile = conn.makefile('wb', self.wbufsize)
         except (AttributeError, NotImplementedError):
             if hasattr(conn, 'send') and hasattr(conn, 'recv'):
-                # it's an SSL.Connection
                 self.rfile = socket._fileobject(conn, "rb", self.rbufsize)
                 self.wfile = socket._fileobject(conn, "wb", self.wbufsize)
             else:
-                # it's a SSLObject, or a martian
                 raise NotImplementedError(
                     '''eventlet.wsgi doesn't support sockets of type {}'''.format(type(conn)))
 
@@ -472,7 +418,6 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
                 if int(content_length) < 0:
                     raise ValueError
             except ValueError:
-                # Negative, or not an int at all
                 self.wfile.write(
                     b"HTTP/1.0 400 Bad Request\r\n"
                     b"Connection: close\r\nContent-length: 0\r\n\r\n")
@@ -497,7 +442,6 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
             try:
                 self.handle_one_response()
             except OSError as e:
-                # Broken pipe, connection reset by peer
                 if support.get_errno(e) not in BROKEN_SOCK:
                     raise
         finally:
@@ -507,10 +451,7 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
         start = time.time()
         headers_set = []
         headers_sent = []
-        # Grab the request input now; app may try to replace it in the environ
         request_input = self.environ['eventlet.input']
-        # Push the headers-sent state into the Input so it won't send a
-        # 100 Continue response if we've already started a response.
         request_input.headers_sent = headers_sent
 
         wfile = self.wfile
@@ -518,8 +459,6 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
         use_chunked = [False]
         length = [0]
         status_code = [200]
-        # Status code of 1xx or 204 or 2xx to CONNECT request MUST NOT send body and related headers
-        # https://httpwg.org/specs/rfc7230.html#rfc.section.3.3.1
         bodyless = [False]
 
         def write(data):
@@ -534,7 +473,6 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
                 for header in response_headers:
                     towrite.append(('%s: %s\r\n' % header).encode('latin-1'))
 
-                # send Date header?
                 if 'date' not in header_list:
                     towrite.append(('Date: %s\r\n' % (format_date_time(time.time()),)).encode())
 
@@ -544,8 +482,6 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
                    self.server.keepalive and (client_conn == 'keep-alive' or
                                               (self.request_version == 'HTTP/1.1' and
                                                not client_conn == 'close')):
-                        # only send keep-alives back to clients that sent them,
-                        # it's redundant for 1.1 connections
                     send_keep_alive = (client_conn == 'keep-alive')
                     self.close_connection = 0
                 else:
@@ -558,19 +494,16 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
                         use_chunked[0] = True
                         towrite.append(b'Transfer-Encoding: chunked\r\n')
                     else:
-                        # client is 1.0 and therefore must read to EOF
                         self.close_connection = 1
 
                 if self.close_connection:
                     towrite.append(b'Connection: close\r\n')
                 elif send_keep_alive:
                     towrite.append(b'Connection: keep-alive\r\n')
-                    # Spec says timeout must be an integer, but we allow sub-second
                     int_timeout = int(self.server.keepalive or 0)
                     if not isinstance(self.server.keepalive, bool) and int_timeout:
                         towrite.append(b'Keep-Alive: timeout=%d\r\n' % int_timeout)
                 towrite.append(b'\r\n')
-                # end of header writing
 
             if use_chunked[0]:
                 # Write the chunked encoding
@@ -586,10 +519,8 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
             if exc_info:
                 try:
                     if headers_sent:
-                        # Re-raise original exception if headers sent
                         raise exc_info[1].with_traceback(exc_info[2])
                 finally:
-                    # Avoid dangling circular ref
                     exc_info = None
 
             bodyless[0] = (
@@ -599,10 +530,6 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
                 or (self.command == "CONNECT" and 200 <= status_code[0] < 300)
             )
 
-            # Response headers capitalization
-            # CONTent-TYpe: TExt/PlaiN -> Content-Type: TExt/PlaiN
-            # Per HTTP RFC standard, header name is case-insensitive.
-            # Please, fix your client to ignore header case if possible.
             if self.capitalize_response_headers:
                 def cap(x):
                     return x.encode('latin1').capitalize().decode('latin1')
@@ -619,15 +546,10 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
                 WSGI_LOCAL.already_handled = False
                 result = self.application(self.environ, start_response)
 
-                # Set content-length if possible
                 if headers_set and not headers_sent and hasattr(result, '__len__'):
-                    # We've got a complete final response
                     if not bodyless[0] and 'Content-Length' not in [h for h, _v in headers_set[1]]:
                         headers_set[1].append(('Content-Length', str(sum(map(len, result)))))
                     if request_input.should_send_hundred_continue:
-                        # We've got a complete final response, and never sent a 100 Continue.
-                        # There's no chance we'll need to read the body as we stream out the
-                        # response, so we can be nice and send a Connection: close header.
                         self.close_connection = 1
 
                 towrite = []
@@ -670,20 +592,10 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
             if hasattr(result, 'close'):
                 result.close()
             if request_input.should_send_hundred_continue:
-                # We just sent the final response, no 100 Continue. Client may or
-                # may not have started to send a body, and if we keep the connection
-                # open we've seen clients either
-                #   * send a body, then start a new request
-                #   * skip the body and go straight to a new request
-                # Looks like the most broadly compatible option is to close the
-                # connection and let the client retry.
-                # https://curl.se/mail/lib-2004-08/0002.html
-                # Note that we likely *won't* send a Connection: close header at this point
                 self.close_connection = 1
 
             if (request_input.chunked_input or
                     request_input.position < (request_input.content_length or 0)):
-                # Read and discard body if connection is going to be reused
                 if self.close_connection == 0:
                     try:
                         request_input.discard()
@@ -792,7 +704,6 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
                 continue
 
             if k in ('CONTENT_TYPE', 'CONTENT_LENGTH'):
-                # These do not get the HTTP_ prefix and were handled above
                 continue
             envk = 'HTTP_' + k
             if envk in env:
@@ -808,19 +719,12 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
             wfile_line = None
         chunked = env.get('HTTP_TRANSFER_ENCODING', '').lower() == 'chunked'
         if not chunked and length is None:
-            # https://www.rfc-editor.org/rfc/rfc9112#section-6.3-2.7
-            # "If this is a request message and none of the above are true, then
-            # the message body length is zero (no message body is present)."
             length = '0'
         env['wsgi.input'] = env['eventlet.input'] = Input(
             self.rfile, length, self.connection, wfile=wfile, wfile_line=wfile_line,
             chunked_input=chunked)
         env['eventlet.posthooks'] = []
 
-        # WebSocketWSGI needs a way to flag the connection as idle,
-        # since it may never fall out of handle_one_request
-        def set_idle():
-            self.conn_state[2] = STATE_IDLE
         env['eventlet.set_idle'] = set_idle
 
         return env
@@ -829,7 +733,6 @@ class HttpProtocol(BaseHTTPServer.BaseHTTPRequestHandler):
         try:
             BaseHTTPServer.BaseHTTPRequestHandler.finish(self)
         except OSError as e:
-            # Broken pipe, connection reset by peer
             if support.get_errno(e) not in BROKEN_SOCK:
                 raise
         greenio.shutdown_safe(self.connection)
@@ -896,7 +799,6 @@ class Server(BaseHTTPServer.HTTPServer):
             'wsgi.run_once': False,
             'wsgi.url_scheme': 'http',
         }
-        # detect secure socket
         if hasattr(self.socket, 'do_handshake'):
             d['wsgi.url_scheme'] = 'https'
             d['HTTPS'] = 'on'
@@ -904,16 +806,6 @@ class Server(BaseHTTPServer.HTTPServer):
             d.update(self.environ)
         return d
 
-    def process_request(self, conn_state):
-        try:
-            # protocol is responsible for pulling out any overrides it needs itself
-            # before it starts processing
-            self.protocol(conn_state, self)
-        except socket.timeout:
-            # Expected exceptions are not exceptional
-            conn_state[1].close()
-            # similar to logging "accepted" in server()
-            self.log.debug('({}) timed out {!r}'.format(self.pid, conn_state[0]))
 
     def log_message(self, message):
         raise AttributeError('''\
@@ -932,22 +824,6 @@ except ImportError:
                     errno.ESHUTDOWN}
 
 
-def socket_repr(sock):
-    scheme = 'http'
-    if hasattr(sock, 'do_handshake'):
-        scheme = 'https'
-
-    name = sock.getsockname()
-    if sock.family == socket.AF_INET:
-        hier_part = '//{}:{}'.format(*name)
-    elif sock.family == socket.AF_INET6:
-        hier_part = '//[{}]:{}'.format(*name[:2])
-    elif sock.family == socket.AF_UNIX:
-        hier_part = name
-    else:
-        hier_part = repr(name)
-
-    return scheme + ':' + hier_part
 
 
 def server(sock, site,
@@ -967,137 +843,4 @@ def server(sock, site,
            debug=True,
            socket_timeout=None,
            capitalize_response_headers=True):
-    """Start up a WSGI server handling requests from the supplied server
-    socket.  This function loops forever.  The *sock* object will be
-    closed after server exits, but the underlying file descriptor will
-    remain open, so if you have a dup() of *sock*, it will remain usable.
-
-    .. warning::
-
-        At the moment :func:`server` will always wait for active connections to finish before
-        exiting, even if there's an exception raised inside it
-        (*all* exceptions are handled the same way, including :class:`greenlet.GreenletExit`
-        and those inheriting from `BaseException`).
-
-        While this may not be an issue normally, when it comes to long running HTTP connections
-        (like :mod:`eventlet.websocket`) it will become problematic and calling
-        :meth:`~eventlet.greenthread.GreenThread.wait` on a thread that runs the server may hang,
-        even after using :meth:`~eventlet.greenthread.GreenThread.kill`, as long
-        as there are active connections.
-
-    :param sock: Server socket, must be already bound to a port and listening.
-    :param site: WSGI application function.
-    :param log: logging.Logger instance or file-like object that logs should be written to.
-                If a Logger instance is supplied, messages are sent to the INFO log level.
-                If not specified, sys.stderr is used.
-    :param environ: Additional parameters that go into the environ dictionary of every request.
-    :param max_size: Maximum number of client connections opened at any time by this server.
-                Default is 1024.
-    :param max_http_version: Set to "HTTP/1.0" to make the server pretend it only supports HTTP 1.0.
-                This can help with applications or clients that don't behave properly using HTTP 1.1.
-    :param protocol: Protocol class.  Deprecated.
-    :param server_event: Used to collect the Server object.  Deprecated.
-    :param minimum_chunk_size: Minimum size in bytes for http chunks.  This can be used to improve
-                performance of applications which yield many small strings, though
-                using it technically violates the WSGI spec. This can be overridden
-                on a per request basis by setting environ['eventlet.minimum_write_chunk_size'].
-    :param log_x_forwarded_for: If True (the default), logs the contents of the x-forwarded-for
-                header in addition to the actual client ip address in the 'client_ip' field of the
-                log line.
-    :param custom_pool: A custom GreenPool instance which is used to spawn client green threads.
-                If this is supplied, max_size is ignored.
-    :param keepalive: If set to False or zero, disables keepalives on the server; all connections
-                will be closed after serving one request. If numeric, it will be the timeout used
-                when reading the next request.
-    :param log_output: A Boolean indicating if the server will log data or not.
-    :param log_format: A python format string that is used as the template to generate log lines.
-                The following values can be formatted into it: client_ip, date_time, request_line,
-                status_code, body_length, wall_seconds.  The default is a good example of how to
-                use it.
-    :param url_length_limit: A maximum allowed length of the request url. If exceeded, 414 error
-                is returned.
-    :param debug: True if the server should send exception tracebacks to the clients on 500 errors.
-                If False, the server will respond with empty bodies.
-    :param socket_timeout: Timeout for client connections' socket operations. Default None means
-                wait forever.
-    :param capitalize_response_headers: Normalize response headers' names to Foo-Bar.
-                Default is True.
-    """
-    serv = Server(
-        sock, sock.getsockname(),
-        site, log,
-        environ=environ,
-        max_http_version=max_http_version,
-        protocol=protocol,
-        minimum_chunk_size=minimum_chunk_size,
-        log_x_forwarded_for=log_x_forwarded_for,
-        keepalive=keepalive,
-        log_output=log_output,
-        log_format=log_format,
-        url_length_limit=url_length_limit,
-        debug=debug,
-        socket_timeout=socket_timeout,
-        capitalize_response_headers=capitalize_response_headers,
-    )
-    if server_event is not None:
-        warnings.warn(
-            'eventlet.wsgi.Server() server_event kwarg is deprecated and will be removed soon',
-            DeprecationWarning, stacklevel=2)
-        server_event.send(serv)
-    if max_size is None:
-        max_size = DEFAULT_MAX_SIMULTANEOUS_REQUESTS
-    if custom_pool is not None:
-        pool = custom_pool
-    else:
-        pool = eventlet.GreenPool(max_size)
-
-    if not (hasattr(pool, 'spawn') and hasattr(pool, 'waitall')):
-        raise AttributeError('''\
-eventlet.wsgi.Server pool must provide methods: `spawn`, `waitall`.
-If unsure, use eventlet.GreenPool.''')
-
-    # [addr, socket, state]
-    connections = {}
-
-    def _clean_connection(_, conn):
-        connections.pop(conn[0], None)
-        conn[2] = STATE_CLOSE
-        greenio.shutdown_safe(conn[1])
-        conn[1].close()
-
-    try:
-        serv.log.info('({}) wsgi starting up on {}'.format(serv.pid, socket_repr(sock)))
-        while is_accepting:
-            try:
-                client_socket, client_addr = sock.accept()
-                client_socket.settimeout(serv.socket_timeout)
-                serv.log.debug('({}) accepted {!r}'.format(serv.pid, client_addr))
-                connections[client_addr] = connection = [client_addr, client_socket, STATE_IDLE]
-                (pool.spawn(serv.process_request, connection)
-                    .link(_clean_connection, connection))
-            except ACCEPT_EXCEPTIONS as e:
-                if support.get_errno(e) not in ACCEPT_ERRNO:
-                    raise
-                else:
-                    break
-            except (KeyboardInterrupt, SystemExit):
-                serv.log.info('wsgi exiting')
-                break
-    finally:
-        for cs in connections.values():
-            prev_state = cs[2]
-            cs[2] = STATE_CLOSE
-            if prev_state == STATE_IDLE:
-                greenio.shutdown_safe(cs[1])
-        pool.waitall()
-        serv.log.info('({}) wsgi exited, is_accepting={}'.format(serv.pid, is_accepting))
-        try:
-            # NOTE: It's not clear whether we want this to leave the
-            # socket open or close it.  Use cases like Spawning want
-            # the underlying fd to remain open, but if we're going
-            # that far we might as well not bother closing sock at
-            # all.
-            sock.close()
-        except OSError as e:
-            if support.get_errno(e) not in BROKEN_SOCK:
-                traceback.print_exc()
+    pass

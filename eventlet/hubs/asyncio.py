@@ -1,14 +1,4 @@
-"""
-Asyncio-based hub, originally implemented by Miguel Grinberg.
-"""
 
-# The various modules involved in asyncio need to call the original, unpatched
-# standard library APIs to work: socket, select, threading, and so on. We
-# therefore don't import them on the module level, since that would involve
-# their imports getting patched, and instead delay importing them as much as
-# possible. Then, we do a little song and dance in Hub.__init__ below so that
-# when they're imported they import the original modules (select, socket, etc)
-# rather than the patched ones.
 
 import os
 import sys
@@ -28,7 +18,6 @@ def is_available():
 
 
 class Hub(hub.BaseHub):
-    """An Eventlet hub implementation on top of an asyncio event loop."""
 
     def __init__(self):
         super().__init__()
@@ -38,22 +27,15 @@ class Hub(hub.BaseHub):
         Split off, because some of this ends up calling get_hub() again and so
         we end up with two Hubs.
         """
-        # Pre-emptively make sure we're using the right modules:
         _unmonkey_patch_asyncio_all()
 
-        # The presumption is that eventlet is driving the event loop, so we
-        # want a new one we control.
         import asyncio
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
         self.sleep_event = asyncio.Event()
 
-        # Allow post-fork() child to continue using the same event loop.
-        # This is a terrible idea.
         import asyncio.events
 
-        def re_register_loop(loop=self.loop):
-            asyncio.events._set_running_loop(loop)
 
         os.register_at_fork(after_in_child=re_register_loop)
 
@@ -61,12 +43,7 @@ class Hub(hub.BaseHub):
         if hasattr(asyncio.tasks, "_swap_current_task"):
             task_to_restore = []
 
-            def re_register_task(task=task_to_restore, loop=self.loop):
-                if task_to_restore:
-                    asyncio.tasks._swap_current_task(loop, task_to_restore[0])
 
-            def store_task():
-                task_to_restore.append(asyncio.tasks.current_task())
 
             os.register_at_fork(after_in_child=re_register_task, before=store_task)
 
@@ -80,16 +57,7 @@ class Hub(hub.BaseHub):
         self.sleep_event.set()
 
     def _file_cb(self, cb, fileno):
-        """
-        Callback called by ``asyncio`` when a file descriptor has an event.
-        """
-        try:
-            cb(fileno)
-        except self.SYSTEM_EXCEPTIONS:
-            raise
-        except:
-            self.squelch_exception(fileno, sys.exc_info())
-        self.sleep_event.set()
+        pass
 
     def add(self, evtype, fileno, cb, tb, mark_as_closed):
         """
@@ -154,7 +122,6 @@ class Hub(hub.BaseHub):
                 self.stopping = False
                 while not self.stopping:
                     while self.closed:
-                        # We ditch all of these first.
                         self.close_one()
                     self.prepare_timers()
                     if self.debug_blocking:

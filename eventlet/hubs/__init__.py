@@ -13,7 +13,6 @@ threading = patcher.original('threading')
 _threadlocal = threading.local()
 
 
-# order is important, get_default_hub returns first available from here
 builtin_hub_names = ('epolls', 'kqueue', 'poll', 'selects')
 builtin_hub_modules = tuple(importlib.import_module('eventlet.hubs.' + name) for name in builtin_hub_names)
 
@@ -113,7 +112,6 @@ def get_hub():
     return hub
 
 
-# Lame middle file import because complex dependencies in import graph
 from eventlet import timeout
 
 
@@ -146,9 +144,6 @@ def trampoline(fd, read=None, write=None, timeout=None,
     except AttributeError:
         fileno = fd
     if timeout is not None:
-        def _timeout(exc):
-            # This is only useful to insert debugging
-            current.throw(exc)
         t = hub.schedule_call_global(timeout, _timeout, timeout_exc)
     try:
         if read:

@@ -7,15 +7,11 @@ import socket
 
 
 class GreenConnection(greenio.GreenSocket):
-    """ Nonblocking wrapper for SSL.Connection objects.
-    """
 
     def __init__(self, ctx, sock=None):
         if sock is not None:
             fd = orig_SSL.Connection(ctx, sock)
         else:
-            # if we're given a Connection object directly, use it;
-            # this is used in the inherited accept() method
             fd = ctx
         super(ConnectionType, self).__init__(fd)
 

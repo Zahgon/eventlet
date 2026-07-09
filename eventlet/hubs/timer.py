@@ -27,9 +27,6 @@ class Timer:
             self.traceback = io.StringIO()
             traceback.print_stack(file=self.traceback)
 
-    @property
-    def pending(self):
-        return not self.called
 
     def __repr__(self):
         secs = getattr(self, 'seconds', None)
@@ -75,8 +72,6 @@ class Timer:
             except AttributeError:
                 pass
 
-    # No default ordering in 3.x. heapq uses <
-    # FIXME should full set be added?
     def __lt__(self, other):
         return id(self) < id(other)
 
@@ -87,11 +82,6 @@ class LocalTimer(Timer):
         self.greenlet = greenlet.getcurrent()
         Timer.__init__(self, *args, **kwargs)
 
-    @property
-    def pending(self):
-        if self.greenlet is None or self.greenlet.dead:
-            return False
-        return not self.called
 
     def __call__(self, *args):
         if not self.called:

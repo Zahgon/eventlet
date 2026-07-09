@@ -9,10 +9,6 @@ __deleted__ = ['devpoll', 'poll', 'epoll', 'kqueue', 'kevent']
 
 
 def get_fileno(obj):
-    # The purpose of this function is to exactly replicate
-    # the behavior of the select module when confronted with
-    # abnormal filenos; the details are extensively tested in
-    # the stdlib test/test_select.py.
     try:
         f = obj.fileno
     except AttributeError:
@@ -27,7 +23,6 @@ def get_fileno(obj):
 
 
 def select(read_list, write_list, error_list, timeout=None):
-    # error checking like this is required by the stdlib unit tests
     if timeout is not None:
         try:
             timeout = float(timeout)
@@ -48,25 +43,9 @@ def select(read_list, write_list, error_list, timeout=None):
 
     listeners = []
 
-    def on_read(d):
-        original = ds[get_fileno(d)]['read']
-        current.switch(([original], [], []))
 
-    def on_write(d):
-        original = ds[get_fileno(d)]['write']
-        current.switch(([], [original], []))
 
-    def on_timeout2():
-        current.switch(([], [], []))
 
-    def on_timeout():
-        # ensure that BaseHub.run() has a chance to call self.wait()
-        # at least once before timed out.  otherwise the following code
-        # can time out erroneously.
-        #
-        # s1, s2 = socket.socketpair()
-        # print(select.select([], [s1], [], 0))
-        timers.append(hub.schedule_call_global(0, on_timeout2))
 
     if timeout is not None:
         timers.append(hub.schedule_call_global(timeout, on_timeout))

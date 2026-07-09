@@ -65,12 +65,9 @@ def socket_accept(descriptor):
 
 
 if sys.platform[:3] == "win":
-    # winsock sometimes throws ENOTCONN
     SOCKET_BLOCKING = {errno.EAGAIN, errno.EWOULDBLOCK}
     SOCKET_CLOSED = {errno.ECONNRESET, errno.ENOTCONN, errno.ESHUTDOWN}
 else:
-    # oddly, on linux/darwin, an unconnected socket is expected to block,
-    # so we treat ENOTCONN the same as EWOULDBLOCK
     SOCKET_BLOCKING = {errno.EAGAIN, errno.EWOULDBLOCK, errno.ENOTCONN}
     SOCKET_CLOSED = {errno.ECONNRESET, errno.ESHUTDOWN, errno.EPIPE}
 
@@ -84,29 +81,18 @@ def set_nonblocking(fd):
     try:
         setblocking = fd.setblocking
     except AttributeError:
-        # fd has no setblocking() method. It could be that this version of
-        # Python predates socket.setblocking(). In that case, we can still set
-        # the flag "by hand" on the underlying OS fileno using the fcntl
-        # module.
         try:
             import fcntl
         except ImportError:
-            # Whoops, Windows has no fcntl module. This might not be a socket
-            # at all, but rather a file-like object with no setblocking()
-            # method. In particular, on Windows, pipes don't support
-            # non-blocking I/O and therefore don't have that method. Which
-            # means fcntl wouldn't help even if we could load it.
             raise NotImplementedError("set_nonblocking() on a file object "
                                       "with no setblocking() method "
                                       "(Windows pipes don't support non-blocking I/O)")
-        # We managed to import fcntl.
         fileno = fd.fileno()
         orig_flags = fcntl.fcntl(fileno, fcntl.F_GETFL)
         new_flags = orig_flags | os.O_NONBLOCK
         if new_flags != orig_flags:
             fcntl.fcntl(fileno, fcntl.F_SETFL, new_flags)
     else:
-        # socket supports setblocking()
         setblocking(0)
 
 
@@ -117,47 +103,27 @@ except ImportError:
 
 
 class GreenSocket:
-    """
-    Green version of socket.socket class, that is intended to be 100%
-    API-compatible.
 
-    It also recognizes the keyword parameter, 'set_nonblocking=True'.
-    Pass False to indicate that socket is already in non-blocking mode
-    to save syscalls.
-    """
-
-    # This placeholder is to prevent __getattr__ from creating an infinite call loop
     fd = None
 
     def __init__(self, family=socket.AF_INET, *args, **kwargs):
         should_set_nonblocking = kwargs.pop('set_nonblocking', True)
         if isinstance(family, int):
             fd = _original_socket(family, *args, **kwargs)
-            # Notify the hub that this is a newly-opened socket.
             notify_opened(fd.fileno())
         else:
             fd = family
 
-        # import timeout from other socket, if it was there
         try:
             self._timeout = fd.gettimeout() or socket.getdefaulttimeout()
         except AttributeError:
             self._timeout = socket.getdefaulttimeout()
 
-        # Filter fd.fileno() != -1 so that won't call set non-blocking on
-        # closed socket
         if should_set_nonblocking and fd.fileno() != -1:
             set_nonblocking(fd)
         self.fd = fd
-        # when client calls setblocking(0) or settimeout(0) the socket must
-        # act non-blocking
         self.act_non_blocking = False
 
-        # Copy some attributes from underlying real socket.
-        # This is the easiest way that i found to fix
-        # https://bitbucket.org/eventlet/eventlet/issue/136
-        # Only `getsockopt` is required to fix that issue, others
-        # are just premature optimization to save __getattr__ call.
         self.bind = fd.bind
         self.close = fd.close
         self.fileno = fd.fileno
@@ -168,23 +134,11 @@ class GreenSocket:
         self.shutdown = fd.shutdown
         self._closed = False
 
-    @property
-    def _sock(self):
-        return self
 
-    def _get_io_refs(self):
-        return self.fd._io_refs
 
-    def _set_io_refs(self, value):
-        self.fd._io_refs = value
 
     _io_refs = property(_get_io_refs, _set_io_refs)
 
-    # Forward unknown attributes to fd, cache the value for future use.
-    # I do not see any simple attribute which could be changed
-    # so caching everything in self is fine.
-    # If we find such attributes - only attributes having __get__ might be cached.
-    # For now - I do not want to complicate it.
     def __getattr__(self, name):
         if self.fd is None:
             raise AttributeError(name)
@@ -199,15 +153,12 @@ class GreenSocket:
             invalidated.
         """
         if self._closed:
-            # If we did any logging, alerting to a second trampoline attempt on a closed
-            # socket here would be useful.
             raise IOClosed()
         try:
             return trampoline(fd, read=read, write=write, timeout=timeout,
                               timeout_exc=timeout_exc,
                               mark_as_closed=self._mark_as_closed)
         except IOClosed:
-            # This socket's been obsoleted. De-fang it.
             self._mark_as_closed()
             raise
 
@@ -232,7 +183,6 @@ class GreenSocket:
         self._closed = True
 
     def __del__(self):
-        # This is in case self.close is not assigned yet (currently the constructor does it)
         close = getattr(self, 'close', None)
         if close is not None:
             close()
@@ -260,7 +210,6 @@ class GreenSocket:
                 try:
                     self._trampoline(fd, write=True, timeout=timeout, timeout_exc=_timeout_exc)
                 except IOClosed:
-                    # ... we need some workable errno here.
                     raise OSError(errno.EBADFD)
                 socket_checkerr(fd)
 
@@ -305,10 +254,6 @@ class GreenSocket:
     def makefile(self, *args, **kwargs):
         return _original_socket.makefile(self, *args, **kwargs)
 
-    def makeGreenFile(self, *args, **kw):
-        warnings.warn("makeGreenFile has been deprecated, please use "
-                      "makefile instead", DeprecationWarning, stacklevel=2)
-        return self.makefile(*args, **kw)
 
     def _read_trampoline(self):
         self._trampoline(
@@ -323,14 +268,6 @@ class GreenSocket:
 
         while True:
             try:
-                # recv: bufsize=0?
-                # recv_into: buffer is empty?
-                # This is needed because behind the scenes we use sockets in
-                # nonblocking mode and builtin recv* methods. Attempting to read
-                # 0 bytes from a nonblocking socket using a builtin recv* method
-                # does not raise a timeout exception. Since we're simulating
-                # a blocking socket here we need to produce a timeout exception
-                # if needed, hence the call to trampoline.
                 if not args[0]:
                     self._read_trampoline()
                 return recv_meth(*args)
@@ -345,20 +282,13 @@ class GreenSocket:
             try:
                 self._read_trampoline()
             except IOClosed as e:
-                # Perhaps we should return '' instead?
                 raise EOFError()
 
     def recv(self, bufsize, flags=0):
         return self._recv_loop(self.fd.recv, b'', bufsize, flags)
 
-    def recvfrom(self, bufsize, flags=0):
-        return self._recv_loop(self.fd.recvfrom, b'', bufsize, flags)
 
-    def recv_into(self, buffer, nbytes=0, flags=0):
-        return self._recv_loop(self.fd.recv_into, 0, buffer, nbytes, flags)
 
-    def recvfrom_into(self, buffer, nbytes=0, flags=0):
-        return self._recv_loop(self.fd.recvfrom_into, 0, buffer, nbytes, flags)
 
     def _send_loop(self, send_method, data, *args):
         if self.act_non_blocking:
@@ -382,8 +312,6 @@ class GreenSocket:
     def send(self, data, flags=0):
         return self._send_loop(self.fd.send, data, flags)
 
-    def sendto(self, data, *args):
-        return self._send_loop(self.fd.sendto, data, *args)
 
     def sendall(self, data, flags=0):
         tail = self.send(data, flags)
@@ -443,11 +371,9 @@ greenpipe_doc = """
     - file argument can be descriptor, file name or file object.
     """
 
-# import SSL module here so we can refer to greenio.SSL.exceptionclass
 try:
     from OpenSSL import SSL
 except ImportError:
-    # pyOpenSSL not installed, define exceptions anyway for convenience
     class SSL:
         class WantWriteError(Exception):
             pass
@@ -473,13 +399,9 @@ def shutdown_safe(sock):
     """
     try:
         try:
-            # socket, ssl.SSLSocket
             return sock.shutdown(socket.SHUT_RDWR)
         except TypeError:
-            # SSL.Connection
             return sock.shutdown()
     except OSError as e:
-        # we don't care if the socket is already closed;
-        # this will often be the case in an http server context
         if get_errno(e) not in (errno.ENOTCONN, errno.EBADF, errno.ENOTSOCK):
             raise

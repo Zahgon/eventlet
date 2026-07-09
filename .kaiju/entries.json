@@ -1,0 +1,34 @@
+{
+  "repo": "eventlet/eventlet",
+  "reference_commit": "a101b9462cd4b2c1a8b008e70879cbe18fc51ef5",
+  "setup": {
+    "install": "pip install -e \".[dev]\"",
+    "packages": "",
+    "pip_packages": [
+      "black",
+      "build",
+      "commitizen",
+      "dnspython >= 1.15.0",
+      "greenlet < 3.4",
+      "isort",
+      "pip-tools",
+      "pre-commit",
+      "pytest",
+      "pytest-json-report",
+      "twine"
+    ],
+    "pre_install": [
+      "apt-get install -y libffi-dev"
+    ],
+    "python": "3.10",
+    "specification": "https://eventlet.readthedocs.io/",
+    "version_source": "pyproject.toml[project.requires-python]",
+    "version_conflicts": [],
+    "system_deps_hint": []
+  },
+  "test": {
+    "test_cmd": "pytest",
+    "test_dir": "tests"
+  },
+  "_schema": "kaiju-breadcrumb/1"
+}

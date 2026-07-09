@@ -26,33 +26,10 @@ _is_py_3_7 = sys.version_info[:2] == (3, 7)
 _original_wrap_socket = __ssl.SSLContext.wrap_socket
 
 
-@contextmanager
-def _original_ssl_context(*args, **kwargs):
-    tmp_sslcontext = _original_wrap_socket.__globals__.get('SSLContext', None)
-    tmp_sslsocket = _original_sslsocket._create.__globals__.get('SSLSocket', None)
-    _original_sslsocket._create.__globals__['SSLSocket'] = _original_sslsocket
-    _original_wrap_socket.__globals__['SSLContext'] = _original_sslcontext
-    try:
-        yield
-    finally:
-        _original_wrap_socket.__globals__['SSLContext'] = tmp_sslcontext
-        _original_sslsocket._create.__globals__['SSLSocket'] = tmp_sslsocket
+pass
 
 
 class GreenSSLSocket(_original_sslsocket):
-    """ This is a green version of the SSLSocket class from the ssl module added
-    in 2.6.  For documentation on it, please see the Python standard
-    documentation.
-
-    Python nonblocking ssl objects don't give errors when the other end
-    of the socket is closed (they do notice when the other end is shutdown,
-    though).  Any write/read operations will simply hang if the socket is
-    closed from the other end.  There is no obvious fix for this problem;
-    it appears to be a limitation of Python's ssl object implementation.
-    A workaround is to set a reasonable timeout on the socket using
-    settimeout(), and to close/reopen the connection when a timeout
-    occurs at an unexpected juncture in the code.
-    """
     def __new__(cls, sock=None, keyfile=None, certfile=None,
                 server_side=False, cert_reqs=CERT_NONE,
                 ssl_version=PROTOCOL_TLS, ca_certs=None,
@@ -111,8 +88,6 @@ class GreenSSLSocket(_original_sslsocket):
             do_handshake_on_connect=do_handshake_on_connect,
         )
 
-    # we are inheriting from SSLSocket because its constructor calls
-    # do_handshake whose behavior we wish to override
     def __init__(self, sock, keyfile=None, certfile=None,
                  server_side=False, cert_reqs=CERT_NONE,
                  ssl_version=PROTOCOL_TLS, ca_certs=None,
@@ -121,24 +96,17 @@ class GreenSSLSocket(_original_sslsocket):
             sock = GreenSocket(sock)
         self.act_non_blocking = sock.act_non_blocking
 
-        # the superclass initializer trashes the methods so we remove
-        # the local-object versions of them and let the actual class
-        # methods shine through
-        # Note: This for Python 2
         try:
             for fn in orig_socket._delegate_methods:
                 delattr(self, fn)
         except AttributeError:
             pass
 
-        # Python 3 SSLSocket construction process overwrites the timeout so restore it
         self._timeout = sock.gettimeout()
 
-        # it also sets timeout to None internally apparently (tested with 3.4.2)
         _original_sslsocket.settimeout(self, 0.0)
         assert _original_sslsocket.gettimeout(self) == 0.0
 
-        # see note above about handshaking
         self.do_handshake_on_connect = do_handshake_on_connect
         if do_handshake_on_connect and self._connected:
             self.do_handshake()
@@ -176,9 +144,6 @@ class GreenSSLSocket(_original_sslsocket):
                                    timeout=self.gettimeout(),
                                    timeout_exc=timeout_exc('timed out'))
                     elif _is_py_3_7 and "unexpected eof" in exc.args[1]:
-                        # For reasons I don't understand on 3.7 we get [ssl:
-                        # KRB5_S_TKT_NYV] unexpected eof while reading]
-                        # errors...
                         raise IOClosed
                     else:
                         raise
@@ -209,17 +174,9 @@ class GreenSSLSocket(_original_sslsocket):
             trampoline(self, write=True, timeout_exc=timeout_exc('timed out'))
             return socket.send(self, data, flags)
 
-    def sendto(self, data, addr, flags=0):
-        # *NOTE: gross, copied code from ssl.py becase it's not factored well enough to be used as-is
-        if self._sslobj:
-            raise ValueError("sendto not allowed on instances of %s" %
-                             self.__class__)
-        else:
-            trampoline(self, write=True, timeout_exc=timeout_exc('timed out'))
-            return socket.sendto(self, data, addr, flags)
+    pass
 
     def sendall(self, data, flags=0):
-        # *NOTE: gross, copied code from ssl.py becase it's not factored well enough to be used as-is
         if self._sslobj:
             if flags != 0:
                 raise ValueError(
@@ -254,15 +211,7 @@ class GreenSSLSocket(_original_sslsocket):
     def recv(self, buflen=1024, flags=0):
         return self._base_recv(buflen, flags, into=False)
 
-    def recv_into(self, buffer, nbytes=None, flags=0):
-        # Copied verbatim from CPython
-        if buffer and nbytes is None:
-            nbytes = len(buffer)
-        elif nbytes is None:
-            nbytes = 1024
-        # end of CPython code
-
-        return self._base_recv(nbytes, flags, into=True, buffer_=buffer)
+    pass
 
     def _base_recv(self, nbytes, flags, into, buffer_=None):
         if into:
@@ -270,7 +219,6 @@ class GreenSSLSocket(_original_sslsocket):
         else:
             plain_socket_function = socket.recv
 
-        # *NOTE: gross, copied code from ssl.py becase it's not factored well enough to be used as-is
         if self._sslobj:
             if flags != 0:
                 raise ValueError(
@@ -303,17 +251,9 @@ class GreenSSLSocket(_original_sslsocket):
                         return b''
                     raise
 
-    def recvfrom(self, addr, buflen=1024, flags=0):
-        if not self.act_non_blocking:
-            trampoline(self, read=True, timeout=self.gettimeout(),
-                       timeout_exc=timeout_exc('timed out'))
-        return super().recvfrom(addr, buflen, flags)
+    pass
 
-    def recvfrom_into(self, buffer, nbytes=None, flags=0):
-        if not self.act_non_blocking:
-            trampoline(self, read=True, timeout=self.gettimeout(),
-                       timeout_exc=timeout_exc('timed out'))
-        return super().recvfrom_into(buffer, nbytes, flags)
+    pass
 
     def unwrap(self):
         return GreenSocket(self._call_trampolining(
@@ -330,8 +270,6 @@ class GreenSSLSocket(_original_sslsocket):
             return real_connect(self, addr)
         else:
             clock = hubs.get_hub().clock
-            # *NOTE: gross, copied code from greenio because it's not factored
-            # well enough to reuse
             if self.gettimeout() is None:
                 while True:
                     try:
@@ -363,8 +301,6 @@ class GreenSSLSocket(_original_sslsocket):
     def connect(self, addr):
         """Connects to remote ADDR, and then wraps the connection in
         an SSL channel."""
-        # *NOTE: grrrrr copied this code from ssl.py because of the reference
-        # to socket.connect which we don't want to call directly
         if self._sslobj:
             raise ValueError("attempt to connect already-connected SSLSocket!")
         self._socket_connect(addr)
@@ -372,7 +308,6 @@ class GreenSSLSocket(_original_sslsocket):
         try:
             sslwrap = _ssl.sslwrap
         except AttributeError:
-            # sslwrap was removed in 3.x and later in 2.7.9
             context = self.context if PY33 else self._context
             sslobj = context._wrap_socket(self, server_side, server_hostname=self.server_hostname)
         else:
@@ -381,7 +316,6 @@ class GreenSSLSocket(_original_sslsocket):
                              self.ca_certs, *self.ciphers)
 
         try:
-            # This is added in Python 3.5, http://bugs.python.org/issue21965
             SSLObject
         except NameError:
             self._sslobj = sslobj
@@ -395,7 +329,6 @@ class GreenSSLSocket(_original_sslsocket):
         """Accepts a new connection from a remote client, and returns
         a tuple containing that new connection wrapped with a server-side
         SSL channel, and the address of the remote client."""
-        # RDW grr duplication of code from greenio
         if self.act_non_blocking:
             newsock, addr = socket.accept(self)
         else:
@@ -435,53 +368,27 @@ class GreenSSLContext(_original_sslcontext):
     def wrap_socket(self, sock, *a, **kw):
         return GreenSSLSocket(sock, *a, _context=self, **kw)
 
-    # https://github.com/eventlet/eventlet/issues/371
-    # Thanks to Gevent developers for sharing patch to this problem.
     if hasattr(_original_sslcontext.options, 'setter'):
-        # In 3.6, these became properties. They want to access the
-        # property __set__ method in the superclass, and they do so by using
-        # super(SSLContext, SSLContext). But we rebind SSLContext when we monkey
-        # patch, which causes infinite recursion.
-        # https://github.com/python/cpython/commit/328067c468f82e4ec1b5c510a4e84509e010f296
-        @_original_sslcontext.options.setter
-        def options(self, value):
-            super(_original_sslcontext, _original_sslcontext).options.__set__(self, value)
+        pass
 
-        @_original_sslcontext.verify_flags.setter
-        def verify_flags(self, value):
-            super(_original_sslcontext, _original_sslcontext).verify_flags.__set__(self, value)
+        pass
 
-        @_original_sslcontext.verify_mode.setter
-        def verify_mode(self, value):
-            super(_original_sslcontext, _original_sslcontext).verify_mode.__set__(self, value)
+        pass
 
         if hasattr(_original_sslcontext, "maximum_version"):
-            @_original_sslcontext.maximum_version.setter
-            def maximum_version(self, value):
-                super(_original_sslcontext, _original_sslcontext).maximum_version.__set__(self, value)
+            pass
 
         if hasattr(_original_sslcontext, "minimum_version"):
-            @_original_sslcontext.minimum_version.setter
-            def minimum_version(self, value):
-                super(_original_sslcontext, _original_sslcontext).minimum_version.__set__(self, value)
+            pass
 
 
 SSLContext = GreenSSLContext
 
 
-# TODO: ssl.create_default_context() was added in 2.7.9.
-# Not clear we're still trying to support Python versions even older than that.
 if hasattr(__ssl, 'create_default_context'):
     _original_create_default_context = __ssl.create_default_context
 
-    def green_create_default_context(*a, **kw):
-        # We can't just monkey-patch on the green version of `wrap_socket`
-        # on to SSLContext instances, but SSLContext.create_default_context
-        # does a bunch of work. Rather than re-implementing it all, just
-        # switch out the __class__ to get our `wrap_socket` implementation
-        context = _original_create_default_context(*a, **kw)
-        context.__class__ = GreenSSLContext
-        return context
+    pass
 
     create_default_context = green_create_default_context
     _create_default_https_context = green_create_default_context

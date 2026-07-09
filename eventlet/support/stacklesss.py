@@ -1,7 +1,3 @@
-"""
-Support for using stackless python.  Broken and riddled with print statements
-at the moment.  Please fix it!
-"""
 
 import sys
 import types
@@ -22,7 +18,6 @@ class FirstSwitch:
         self.gr = gr
 
     def __call__(self, *args, **kw):
-        # print("first call", args, kw)
         gr = self.gr
         del gr.switch
         run, gr.run = gr.run, None
@@ -46,7 +41,6 @@ class greenlet:
         self.switch = FirstSwitch(self)
 
     def switch(self, *args):
-        # print("switch", args)
         global caller
         caller = stackless.getcurrent()
         coro_args[self] = args
@@ -68,17 +62,3 @@ class GreenletExit(Exception):
     pass
 
 
-def emulate():
-    module = types.ModuleType('greenlet')
-    sys.modules['greenlet'] = module
-    module.greenlet = greenlet
-    module.getcurrent = getcurrent
-    module.GreenletExit = GreenletExit
-
-    caller = stackless.getcurrent()
-    tasklet_to_greenlet[caller] = None
-    main_coro = greenlet()
-    tasklet_to_greenlet[caller] = main_coro
-    main_coro.t = caller
-    del main_coro.switch  # It's already running
-    coro_args[main_coro] = None

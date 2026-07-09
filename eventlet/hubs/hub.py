@@ -7,16 +7,12 @@ import traceback
 
 arm_alarm = None
 if hasattr(signal, 'setitimer'):
-    def alarm_itimer(seconds):
-        signal.setitimer(signal.ITIMER_REAL, seconds)
     arm_alarm = alarm_itimer
 else:
     try:
         import itimer
         arm_alarm = itimer.alarm
     except ImportError:
-        def alarm_signal(seconds):
-            signal.alarm(math.ceil(seconds))
         arm_alarm = alarm_signal
 
 import eventlet.hubs
@@ -36,7 +32,6 @@ WRITE = "write"
 def closed_callback(fileno):
     """ Used to de-fang a callback that may be triggered by a loop in BaseHub.wait
     """
-    # No-op.
     pass
 
 
@@ -80,7 +75,6 @@ class FdListener:
 noop = FdListener(READ, 0, lambda x: None, lambda x: None, None)
 
 
-# in debug mode, track the call site that created the listener
 
 
 class DebugListener(FdListener):
@@ -102,14 +96,9 @@ class DebugListener(FdListener):
     __str__ = __repr__
 
 
-def alarm_handler(signum, frame):
-    import inspect
-    raise RuntimeError("Blocking detector ALARMED at" + str(inspect.getframeinfo(frame)))
 
 
 class BaseHub:
-    """ Base hub class for easing the implementation of subclasses that are
-    specific to a particular underlying event architecture. """
 
     SYSTEM_EXCEPTIONS = (KeyboardInterrupt, SystemExit)
 
@@ -137,7 +126,6 @@ class BaseHub:
         self.debug_blocking_resolution = 1
 
     def block_detect_pre(self):
-        # shortest alarm we can possibly raise is one second
         tmp = signal.signal(signal.SIGALRM, alarm_handler)
         if tmp != alarm_handler:
             self._old_signal_handler = tmp
@@ -181,7 +169,6 @@ class BaseHub:
                     "eventlet.debug.hub_prevent_multiple_readers(False) - MY THREAD=%s; "
                     "THAT THREAD=%s" % (
                         evtype, fileno, evtype, cb, bucket[fileno]))
-            # store off the second listener in another structure
             self.secondaries[evtype].setdefault(fileno, []).append(listener)
         else:
             bucket[fileno] = listener
@@ -201,8 +188,6 @@ class BaseHub:
                     listener.defang()
                 del bucket[fileno]
 
-        # For the primary listeners, we actually need to call remove,
-        # which may modify the underlying OS polling objects.
         for evtype, bucket in self.listeners.items():
             if fileno in bucket:
                 listener = bucket[fileno]
@@ -222,14 +207,12 @@ class BaseHub:
 
     def remove(self, listener):
         if listener.spent:
-            # trampoline may trigger this in its finally section.
             return
 
         fileno = listener.fileno
         evtype = listener.evtype
         if listener is self.listeners[evtype][fileno]:
             del self.listeners[evtype][fileno]
-            # migrate a secondary listener to be the primary listener
             if fileno in self.secondaries[evtype]:
                 sec = self.secondaries[evtype][fileno]
                 if sec:
@@ -253,7 +236,6 @@ class BaseHub:
     def remove_descriptor(self, fileno):
         """ Completely remove all listeners for this fileno.  For internal use
         only."""
-        # gather any listeners we have
         listeners = []
         listeners.append(self.listeners[READ].get(fileno, noop))
         listeners.append(self.listeners[WRITE].get(fileno, noop))
@@ -261,11 +243,9 @@ class BaseHub:
         listeners.extend(self.secondaries[WRITE].get(fileno, ()))
         for listener in listeners:
             try:
-                # listener.cb may want to remove(listener)
                 listener.cb(fileno)
             except Exception:
                 self.squelch_generic_exception(sys.exc_info())
-        # NOW this fileno is now dead to all
         self.listeners[READ].pop(fileno, None)
         self.listeners[WRITE].pop(fileno, None)
         self.secondaries[READ].pop(fileno, None)
@@ -278,17 +258,11 @@ class BaseHub:
         """
         listener = self.closed.pop()
         if not listener.greenlet.dead:
-            # There's no point signalling a greenlet that's already dead.
             listener.tb(eventlet.hubs.IOClosed(errno.ENOTCONN, "Operation on closed file"))
 
     def ensure_greenlet(self):
         if self.greenlet.dead:
-            # create new greenlet sharing same parent as original
             new = greenlet.greenlet(self.run, self.greenlet.parent)
-            # need to assign as parent of old greenlet
-            # for those greenlets that are currently
-            # children of the dead hub and may subsequently
-            # exit without further switching to hub.
             self.greenlet.parent = new
             self.greenlet = new
 
@@ -334,9 +308,6 @@ class BaseHub:
     def run(self, *a, **kw):
         """Run the runloop until abort is called.
         """
-        # accept and discard variable arguments because they will be
-        # supplied if other greenlets have run and exited before the
-        # hub's greenlet gets a chance to run
         if self.running:
             raise RuntimeError("Already running!")
         try:
@@ -344,7 +315,6 @@ class BaseHub:
             self.stopping = False
             while not self.stopping:
                 while self.closed:
-                    # We ditch all of these first.
                     self.close_one()
                 self.prepare_timers()
                 if self.debug_blocking:
@@ -371,24 +341,7 @@ class BaseHub:
             self.stopping = False
 
     def abort(self, wait=False):
-        """Stop the runloop. If run is executing, it will exit after
-        completing the next runloop iteration.
-
-        Set *wait* to True to cause abort to switch to the hub immediately and
-        wait until it's finished processing.  Waiting for the hub will only
-        work from the main greenthread; all other greenthreads will become
-        unreachable.
-        """
-        if self.running:
-            self.stopping = True
-        if wait:
-            assert self.greenlet is not greenlet.getcurrent(
-            ), "Can't abort with wait from inside the hub's greenlet."
-            # schedule an immediate timer just so the hub doesn't sleep
-            self.schedule_call_global(0, lambda: None)
-            # switch to it; when done the hub will switch back to its parent,
-            # the main greenlet
-            self.switch()
+        pass
 
     def squelch_generic_exception(self, exc_info):
         if self.debug_exceptions:
@@ -474,22 +427,10 @@ class BaseHub:
             except:
                 self.squelch_timer_exception(timer, sys.exc_info())
 
-    # for debugging:
 
-    def get_readers(self):
-        return self.listeners[READ].values()
 
-    def get_writers(self):
-        return self.listeners[WRITE].values()
 
-    def get_timers_count(hub):
-        return len(hub.timers) + len(hub.next_timers)
 
-    def set_debug_listeners(self, value):
-        if value:
-            self.lclass = DebugListener
-        else:
-            self.lclass = FdListener
 
     def set_timer_exceptions(self, value):
         self.debug_exceptions = value
